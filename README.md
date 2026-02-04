@@ -699,6 +699,3 @@ git merge feature/new-feature
 
 For more information, check the `/docs` directory or contact the development team.
 
-## License
-
-[Add your license here]
