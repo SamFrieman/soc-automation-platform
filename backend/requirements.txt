@@ -20,7 +20,7 @@ python-decouple==3.8
 requests==2.31.0
 
 # Data Processing
-pandas==2.1.4
+pandas==2.2.2
 numpy==1.26.3
 
 # MITRE ATT&CK Data

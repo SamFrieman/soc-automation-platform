@@ -1,0 +1,145 @@
+name: SOC Platform CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: soc_test_db
+          POSTGRES_USER: soc_user
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r backend/requirements.txt
+        pip install pytest-cov pytest-django factory-boy responses
+    
+    - name: Create .env file
+      run: |
+        cd backend
+        cp ../.env.example ../.env
+        sed -i 's/localhost/postgres/g' ../.env
+        sed -i 's/redis:\/\/localhost/redis:\/\/redis/g' ../.env
+    
+    - name: Run migrations
+      working-directory: backend
+      env:
+        DB_HOST: postgres
+        DB_USER: soc_user
+        DB_PASSWORD: testpass
+        DB_NAME: soc_test_db
+        REDIS_URL: redis://redis:6379/0
+      run: python manage.py migrate
+    
+    - name: Run Backend Tests
+      working-directory: backend
+      env:
+        DB_HOST: postgres
+        DB_USER: soc_user
+        DB_PASSWORD: testpass
+        DB_NAME: soc_test_db
+        REDIS_URL: redis://redis:6379/0
+      run: |
+        pytest alerts/ incidents/ playbooks/ -v --cov=alerts --cov=incidents --cov=playbooks --cov-report=xml
+    
+    - name: Run Flake8
+      working-directory: backend
+      run: flake8 . --max-line-length=120 --exclude=migrations,__pycache__
+    
+    - name: Run Black check
+      working-directory: backend
+      run: black --check .
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./backend/coverage.xml
+        flags: backend
+        fail_ci_if_error: false
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: frontend
+      run: npm ci
+    
+    - name: Run tests
+      working-directory: frontend
+      run: npm test -- --coverage --watchAll=false
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./frontend/coverage/coverage-final.json
+        flags: frontend
+        fail_ci_if_error: false
+  
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black pylint bandit safety
+    
+    - name: Security check with bandit
+      working-directory: backend
+      run: bandit -r . -ll -x migrations,tests || true
+    
+    - name: Dependency check with safety
+      run: safety check -r backend/requirements.txt || true
+
